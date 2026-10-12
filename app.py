@@ -22,6 +22,8 @@ from collections import Counter
 
 from itertools import combinations
 
+from contextlib import contextmanager
+
 from dotenv import load_dotenv
 
 from flask import Flask, request, jsonify, send_from_directory, session
@@ -76,29 +78,76 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # --------------------------------------------------
 
+@contextmanager
 def db():
+    con = sqlite3.connect(DB_PATH, timeout=30)
 
-    con = sqlite3.connect(DB_PATH)
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS runs (
+                id TEXT PRIMARY KEY,
+                created TEXT,
+                mode TEXT,
+                payload TEXT,
+                owner_id TEXT NOT NULL
+            )
+        """)
 
-    con.execute("""
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS live_quota (
+                id TEXT PRIMARY KEY,
+                created TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                planned_calls INTEGER NOT NULL
+            )
+        """)
 
-        CREATE TABLE IF NOT EXISTS runs (
+        con.commit()
 
-            id TEXT PRIMARY KEY,
+        with con:
+            yield con
 
-            created TEXT,
+    finally:
+        con.close()
+def reserve_live_quota(owner_id, planned_calls):
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    reservation_id = uuid.uuid4().hex
 
-            mode TEXT,
+    with db() as con:
+        con.execute("BEGIN IMMEDIATE")
 
-            payload TEXT,
-            owner_id TEXT NOT NULL
+        visitor_count = con.execute(
+            "SELECT COUNT(*) FROM live_quota WHERE owner_id=? AND created>=?",
+            (owner_id, today),
+        ).fetchone()[0]
 
+        global_count = con.execute(
+            "SELECT COUNT(*) FROM live_quota WHERE created>=?",
+            (today,),
+        ).fetchone()[0]
+
+        global_calls = con.execute(
+            "SELECT COALESCE(SUM(planned_calls), 0) FROM live_quota WHERE created>=?",
+            (today,),
+        ).fetchone()[0]
+
+        if visitor_count >= 3 or global_count >= 30:
+            return False
+
+        if global_calls + planned_calls > 300:
+            return False
+
+        con.execute(
+            "INSERT INTO live_quota (id, created, owner_id, planned_calls) VALUES (?, ?, ?, ?)",
+            (
+                reservation_id,
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                owner_id,
+                planned_calls,
+            ),
         )
 
-    """)
-
-    return con
-
+    return True
 def save_run(result):
 
     with db() as con:
@@ -1045,20 +1094,16 @@ def run():
 
     if mode == "live" and os.getenv("VARYNX_PUBLIC_MODE", "0") == "1":
         planned_calls = len(countries) * len(frames) * repetitions
+
         if planned_calls > 10:
-            return jsonify({"error": "Public demo limit: at most 10 model responses per investigation."}), 429
-        today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-        with db() as con:
-            used = con.execute(
-                "SELECT COUNT(*) FROM runs WHERE owner_id=? AND mode='live' AND created>=?",
-                (visitor_id(), today)
-            ).fetchone()[0]
-            total = con.execute(
-                "SELECT COUNT(*) FROM runs WHERE mode='live' AND created>=?",
-                (today,)
-            ).fetchone()[0]
-        if used >= 3 or total >= 30:
-            return jsonify({"error": "Public live-model quota reached. Use synthetic demo mode."}), 429
+            return jsonify({
+                "error": "Public demo limit: at most 10 model responses per investigation."
+            }), 429
+
+        if not reserve_live_quota(visitor_id(), planned_calls):
+            return jsonify({
+                "error": "Public live-model quota reached. Use synthetic demo mode."
+            }), 429
 
     rows = []
 
