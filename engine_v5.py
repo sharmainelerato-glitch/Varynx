@@ -2,7 +2,28 @@
 from collections import Counter
 from itertools import combinations
 
-COUNTRIES = ("South Africa", "Japan", "Switzerland", "UK", "USA")
+COUNTRIES = (
+    "South Africa",
+    "Japan",
+    "Switzerland",
+    "UK",
+    "USA",
+    "Germany",
+    "France",
+    "India",
+    "Brazil",
+    "Kenya",
+    "Nigeria",
+    "Australia",
+    "Canada",
+    "South Korea",
+    "China",
+    "Singapore",
+    "Netherlands",
+    "Spain",
+    "Mexico",
+    "United Arab Emirates",
+)
 FRAMES = ("research", "academic")
 
 

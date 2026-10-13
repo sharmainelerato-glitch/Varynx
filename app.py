@@ -52,17 +52,26 @@ def no_cache_api(response):
     return response
 
 COUNTRIES = {
-
     "South Africa": "South African English",
-
     "Japan": "Japanese",
-
     "Switzerland": "Swiss Standard German",
-
     "UK": "British English",
-
     "USA": "American English",
-
+    "Germany": "German",
+    "France": "French",
+    "India": "Indian English",
+    "Brazil": "Brazilian Portuguese",
+    "Kenya": "Kenyan English",
+    "Nigeria": "Nigerian English",
+    "Australia": "Australian English",
+    "Canada": "Canadian English",
+    "South Korea": "Korean",
+    "China": "Mandarin Chinese",
+    "Singapore": "Singapore English",
+    "Netherlands": "Dutch",
+    "Spain": "European Spanish",
+    "Mexico": "Mexican Spanish",
+    "United Arab Emirates": "Modern Standard Arabic",
 }
 
 FRAMES = ("research", "academic")
@@ -1025,71 +1034,65 @@ def v7_semantic_review(rows):
 @app.post("/api/test")
 
 def run():
-
     d = request.get_json(silent=True) or {}
 
     base = str(d.get("prompt", "")).strip()[:2000]
 
     if not base:
-
-        return jsonify({"error": "Enter a test prompt"}), 400
+        return jsonify({
+            "error": "Enter a test prompt"
+        }), 400
 
     requested = d.get("countries", [])
 
     if not isinstance(requested, list):
-
         return jsonify({
-
             "error": "Countries must be a list."
-
         }), 400
 
-    countries = list(dict.fromkeys(
+    if not requested:
+        return jsonify({
+            "error": "Select at least one country."
+        }), 400
 
-        c for c in requested if c in COUNTRIES
+    if any(
+        not isinstance(c, str) or c not in COUNTRIES
+        for c in requested
+    ):
+        return jsonify({
+            "error": "One or more selected countries are invalid."
+        }), 400
 
-    ))[:5] or list(COUNTRIES)
+    countries = list(dict.fromkeys(requested))
+
+    if len(countries) > 5:
+        return jsonify({
+            "error": "Select a maximum of five countries per investigation."
+        }), 400
 
     frames = (
-
         ["research", "academic"]
-
         if d.get("compareFrames", True)
-
         else ["research"]
-
     )
 
     try:
-
         repetitions = int(d.get("repetitions", 1))
-
     except (ValueError, TypeError):
-
         return jsonify({
-
             "error": "Repetitions must be a number."
-
         }), 400
 
     if not 1 <= repetitions <= 5:
-
         return jsonify({
-
             "error": "Choose 1 to 5 repetitions."
-
         }), 400
 
     mode = (
-
         "live"
-
         if os.getenv("LLM_BASE_URL")
-
         and d.get("useLive", False)
-
         else "demo"
-
     )
 
     if mode == "live" and os.getenv("VARYNX_PUBLIC_MODE", "0") == "1":
@@ -1108,197 +1111,153 @@ def run():
     rows = []
 
     for country in countries:
-
         for frame in frames:
-
             prompt = make_prompt(
-
                 base, country, frame, COUNTRIES[country]
-
             )
 
             for trial in range(1, repetitions + 1):
-
                 try:
-
                     response = (
-
                         query_model(prompt)
-
                         if mode == "live"
-
                         else demo_response(country, frame, trial)
-
                     )
 
                 except Exception as exc:
-
                     return jsonify({
-
                         "error": "Model request failed: " + str(exc),
-
                         "completed": rows,
-
                     }), 502
 
                 rows.append({
-
                     "country": country,
-
                     "frame": frame,
-
                     "trial": trial,
-
                     "prompt": prompt,
-
                     "response": response,
-
                     "behavior": classify(response),
-
                     "source": (
-
                         "model-endpoint"
-
                         if mode == "live"
-
                         else "synthetic-demo"
-
                     ),
-
                 })
 
     flips = []
 
     for country in countries:
-
         research = [
-
             r for r in rows
-
             if r["country"] == country
-
             and r["frame"] == "research"
-
         ]
 
         academic = [
-
             r for r in rows
-
             if r["country"] == country
-
             and r["frame"] == "academic"
-
         ]
 
         if not research or not academic:
-
             continue
 
         research_label = Counter(
-
             r["behavior"] for r in research
-
         ).most_common(1)[0][0]
 
         academic_label = Counter(
-
             r["behavior"] for r in academic
-
         ).most_common(1)[0][0]
 
         if research_label != academic_label:
-
             flips.append({
-
                 "country": country,
-
                 "from": "research",
-
                 "to": "academic",
-
                 "original": research[0]["response"],
-
                 "changed": academic[0]["response"],
-
                 "candidatePoint": "Framing only",
-
                 "verifiedMinimal": False,
-
             })
 
     cross = []
 
     for i, a in enumerate(rows):
-
         for b in rows[i + 1:]:
-
             if (
-
                 a["frame"] == b["frame"]
-
                 and a["country"] != b["country"]
-
                 and a["behavior"] != b["behavior"]
-
             ):
-
                 entry = {
-
                     "a": a["country"],
-
                     "b": b["country"],
-
                     "frame": a["frame"],
-
                 }
 
                 if entry not in cross:
-
                     cross.append(entry)
 
     language_comparisons = []
+
     for i, first in enumerate(rows):
         for second in rows[i + 1:]:
-            different_country = first["country"] != second["country"]
-            different_frame = first["frame"] != second["frame"]
+            different_country = (
+                first["country"] != second["country"]
+            )
+
+            different_frame = (
+                first["frame"] != second["frame"]
+            )
+
             if different_country == different_frame:
                 continue
+
             if first["trial"] != second["trial"]:
                 continue
-            comparison = compare_response_language(first["response"], second["response"])
+
+            comparison = compare_response_language(
+                first["response"],
+                second["response"]
+            )
+
             language_comparisons.append({
                 "firstCountry": first["country"],
                 "secondCountry": second["country"],
                 "firstFrame": first["frame"],
                 "secondFrame": second["frame"],
-                "dimension": "country" if different_country else "frame",
+                "dimension": (
+                    "country"
+                    if different_country
+                    else "frame"
+                ),
                 **comparison,
             })
 
     result = {
         "languageComparisons": language_comparisons,
+
         "v7Analysis": v7_semantic_review(rows),
-        "languageControl": "English requested for every country; compliance assessed from response script, not guaranteed.",
+
+        "languageControl": (
+            "English requested for every country; "
+            "compliance assessed from response script, "
+            "not guaranteed."
+        ),
 
         "id": uuid.uuid4().hex[:10],
 
         "created": datetime.datetime.now(
-
             datetime.timezone.utc
-
         ).isoformat(),
 
         "mode": mode,
 
         "model": (
-
             os.getenv("LLM_NAME", "Configured model")
-
             if mode == "live"
-
             else "Synthetic fixture"
-
         ),
 
         "basePrompt": base,
@@ -1318,30 +1277,22 @@ def run():
         "verified": False,
 
         "note": (
-         "Automated refusal labels are heuristic. "
-         "Human review is required. "
-         + (
-           "Responses were generated through the configured live model endpoint. "
-           if mode == "live"
-           else "Responses are synthetic demonstration data. "
-         )
-         + "Language comparisons require matching scripts. "
-         "Cross-country differences do not prove causation. "
-         "Candidate findings are not independently verified."
+            "Automated refusal labels are heuristic. "
+            "Human review is required. "
+            + (
+                "Responses were generated through the configured live model endpoint. "
+                if mode == "live"
+                else "Responses are synthetic demonstration data. "
+            )
+            + "Language comparisons require matching scripts. "
+            "Cross-country differences do not prove causation. "
+            "Candidate findings are not independently verified."
         ),
-
     }
 
     save_run(result)
 
     return jsonify(result)
-
-# --------------------------------------------------
-
-# IMPORT MANUAL MODEL RESPONSES
-
-# --------------------------------------------------
-
 @app.post("/api/import")
 
 def import_responses():

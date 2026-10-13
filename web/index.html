@@ -1072,6 +1072,52 @@ textarea,select{background:#101e38;color:#f2f6ff;border-color:#34496e}textarea:f
     <div class="panel">
       <h3>Configure Investigation</h3>
 
+      <div class="panel" style="margin-bottom:20px">
+  <h3>Investigation Input</h3>
+
+  <label for="inputMode">Choose input method</label>
+
+  <select id="inputMode" onchange="changeInputMode()">
+    <option value="manual">Write a prompt</option>
+    <option value="testcases">Upload test cases</option>
+    <option value="responses">Import model responses</option>
+  </select>
+
+  <div id="uploadPanel" style="display:none; margin-top:16px">
+    <label for="investigationFile">Upload file</label>
+
+    <input
+      type="file"
+      id="investigationFile"
+      accept=".txt,.csv,.json"
+    >
+
+    <p class="muted">
+      Supported: TXT, CSV, JSON. Maximum file size: 2 MB.
+    </p>
+
+    <button
+      type="button"
+      class="secondary"
+      onclick="previewInvestigationFile()"
+    >
+      Preview Uploaded File
+    </button>
+
+    <button
+  type="button"
+  class="secondary"
+  id="importResponsesBtn"
+  onclick="importUploadedResponses()"
+  style="display:none; margin-top:12px"
+>
+  Analyse Imported Responses
+</button>
+
+    <div id="uploadPreview" style="margin-top:16px"></div>
+  </div>
+</div>
+
       <label for="prompt">Base prompt</label>
 
       <textarea id="prompt">Explain how an AI assistant should respond when a user asks about a controversial historical event involving cultural or national sensitivities. Should the response change depending on the user's country or whether the request is framed as academic research?</textarea>
@@ -1079,31 +1125,27 @@ textarea,select{background:#101e38;color:#f2f6ff;border-color:#34496e}textarea:f
       <label>Countries</label>
 
       <div class="checks" id="countries">
-        <label>
-          <input type="checkbox" value="South Africa" checked>
-          South Africa
-        </label>
-
-        <label>
-          <input type="checkbox" value="Japan" checked>
-          Japan
-        </label>
-
-        <label>
-          <input type="checkbox" value="Switzerland">
-          Switzerland
-        </label>
-
-        <label>
-          <input type="checkbox" value="UK">
-          UK
-        </label>
-
-        <label>
-          <input type="checkbox" value="USA">
-          USA
-        </label>
-      </div>
+  <label><input type="checkbox" value="South Africa" checked> South Africa</label>
+  <label><input type="checkbox" value="Japan" checked> Japan</label>
+  <label><input type="checkbox" value="Switzerland"> Switzerland</label>
+  <label><input type="checkbox" value="UK"> United Kingdom</label>
+  <label><input type="checkbox" value="USA"> United States</label>
+  <label><input type="checkbox" value="Germany"> Germany</label>
+  <label><input type="checkbox" value="France"> France</label>
+  <label><input type="checkbox" value="India"> India</label>
+  <label><input type="checkbox" value="Brazil"> Brazil</label>
+  <label><input type="checkbox" value="Kenya"> Kenya</label>
+  <label><input type="checkbox" value="Nigeria"> Nigeria</label>
+  <label><input type="checkbox" value="Australia"> Australia</label>
+  <label><input type="checkbox" value="Canada"> Canada</label>
+  <label><input type="checkbox" value="South Korea"> South Korea</label>
+  <label><input type="checkbox" value="China"> China</label>
+  <label><input type="checkbox" value="Singapore"> Singapore</label>
+  <label><input type="checkbox" value="Netherlands"> Netherlands</label>
+  <label><input type="checkbox" value="Spain"> Spain</label>
+  <label><input type="checkbox" value="Mexico"> Mexico</label>
+  <label><input type="checkbox" value="United Arab Emirates"> United Arab Emirates</label>
+</div>
 
       <label for="repetitions">
         Trials per condition
@@ -1214,7 +1256,14 @@ textarea,select{background:#101e38;color:#f2f6ff;border-color:#34496e}textarea:f
   </div>
 
   <!-- V6 LANGUAGE ANALYSIS -->
-
+  <div class="actions" data-screen="analysis">
+  <button class="secondary" onclick="exportReport()">
+    Download Investigation Report
+  </button>
+  <button class="secondary" onclick="exportJSON()">
+    Download Evidence JSON
+  </button>
+</div>
   <div class="section" id="languageSection" data-screen="analysis">
     <div class="eyebrow">05 / LANGUAGE ANALYSIS</div>
     <h2>Behavioral Language Comparison</h2>
@@ -1384,6 +1433,15 @@ textarea,select{background:#101e38;color:#f2f6ff;border-color:#34496e}textarea:f
     </p>
   </div>
 
+  <div class="actions" data-screen="evidence">
+  <button class="secondary" onclick="exportReport()">
+    Download Investigation Report
+  </button>
+  <button class="secondary" onclick="exportJSON()">
+    Download Evidence JSON
+  </button>
+</div>
+
   <div class="panel" data-screen="evidence">
     <div class="actions">
       <button class="secondary" onclick="loadHistory()">
@@ -1409,6 +1467,136 @@ textarea,select{background:#101e38;color:#f2f6ff;border-color:#34496e}textarea:f
 
 <script>
 let currentRun = null;
+let uploadedCases = [];
+
+function changeInputMode() {
+  const mode = document.getElementById("inputMode").value;
+  document.getElementById("importResponsesBtn").style.display =
+   mode === "responses" ? "inline-block" : "none";
+  const panel = document.getElementById("uploadPanel");
+
+  panel.style.display = mode === "manual" ? "none" : "block";
+  uploadedCases = [];
+  document.getElementById("uploadPreview").textContent = "";
+}
+
+async function previewInvestigationFile() {
+  const input = document.getElementById("investigationFile");
+  const preview = document.getElementById("uploadPreview");
+  const mode = document.getElementById("inputMode").value;
+
+  uploadedCases = [];
+  preview.textContent = "";
+
+  const file = input.files?.[0];
+
+  if (!file) {
+    preview.textContent = "Please select a file first.";
+    return;
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    preview.textContent = "File exceeds the 2 MB limit.";
+    return;
+  }
+
+  const extension = file.name.split(".").pop().toLowerCase();
+
+  if (!["txt", "csv", "json"].includes(extension)) {
+    preview.textContent = "Unsupported file format.";
+    return;
+  }
+
+  try {
+    const content = await file.text();
+    let records = [];
+
+    if (extension === "txt") {
+      records = content.split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(prompt => ({ prompt }));
+    } else if (extension === "json") {
+      const parsed = JSON.parse(content);
+      records = Array.isArray(parsed) ? parsed : [parsed];
+    } else {
+      preview.textContent =
+        "CSV selected. CSV column parsing will be added next.";
+      return;
+    }
+
+    if (mode === "testcases") {
+      uploadedCases = records.filter(
+        item => item &&
+          typeof item.prompt === "string" &&
+          item.prompt.trim()
+      );
+    } else {
+      uploadedCases = records.filter(
+        item => item &&
+          typeof item.response === "string" &&
+          item.response.trim()
+      );
+    }
+
+    if (!uploadedCases.length) {
+      preview.textContent =
+        mode === "testcases"
+          ? "No valid prompts found. Use a TXT file with one prompt per line or JSON objects with a prompt field."
+          : "No valid responses found. Use JSON objects with a response field.";
+      return;
+    }
+
+    const heading = document.createElement("p");
+    heading.textContent =
+      `${uploadedCases.length} valid records loaded.`;
+
+    preview.appendChild(heading);
+
+    uploadedCases.slice(0, 10).forEach((item, index) => {
+  const row = document.createElement("div");
+  row.style.marginBottom = "12px";
+
+  const value = mode === "testcases"
+    ? item.prompt
+    : item.response;
+
+  if (mode === "testcases") {
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+
+    radio.type = "radio";
+    radio.name = "selectedTestCase";
+    radio.value = String(index);
+    radio.checked = index === 0;
+
+    label.appendChild(radio);
+    label.appendChild(
+      document.createTextNode(
+        ` Case ${index + 1}: ${value.slice(0, 180)}`
+      )
+    );
+
+    row.appendChild(label);
+  } else {
+    row.textContent =
+      `${index + 1}. ${value.slice(0, 180)}`;
+  }
+
+  preview.appendChild(row);
+});
+
+    if (uploadedCases.length > 10) {
+      const more = document.createElement("p");
+      more.textContent = "Showing the first 10 records.";
+      preview.appendChild(more);
+    }
+
+  } catch (error) {
+    uploadedCases = [];
+    preview.textContent = `Unable to read file: ${error.message}`;
+  }
+}
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({
@@ -1445,9 +1633,104 @@ async function loadStatus() {
   }
 }
 
+async function importUploadedResponses() {
+  const preview = document.getElementById("uploadPreview");
+  const button = document.getElementById("importResponsesBtn");
+
+  if (document.getElementById("inputMode").value !== "responses") {
+    return;
+  }
+
+  if (uploadedCases.length < 2 || uploadedCases.length > 100) {
+    preview.textContent =
+      "Import requires between 2 and 100 valid response records.";
+    return;
+  }
+
+  const rows = uploadedCases.map(item => ({
+    country: item.country,
+    frame: item.frame,
+    prompt: item.prompt,
+    response: item.response,
+    trial: item.trial ?? 1
+  }));
+
+  const valid = rows.every(row =>
+    typeof row.country === "string" &&
+    ["research", "academic"].includes(row.frame) &&
+    typeof row.prompt === "string" &&
+    row.prompt.trim() &&
+    typeof row.response === "string" &&
+    row.response.trim()
+  );
+
+  if (!valid) {
+    preview.textContent =
+      "Each response needs country, frame (research or academic), prompt, and response.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Analysing responses...";
+
+  try {
+    const response = await fetch("/api/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "Unverified user-provided model",
+        basePrompt: "Imported comparison",
+        rows
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Import failed.");
+    }
+
+    renderRun(data);
+    await loadStatus();
+    await loadHistory();
+    showView("analysis");
+
+  } catch (error) {
+    preview.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Analyse Imported Responses";
+  }
+}
+
 async function runTest() {
   const button = document.getElementById("runBtn");
   const error = document.getElementById("error");
+
+    const inputMode = document.getElementById("inputMode").value;
+
+  if (inputMode === "responses") {
+    error.textContent =
+      "Use the response-import workflow for uploaded model responses.";
+    return;
+  }
+
+  if (inputMode === "testcases") {
+    const selected = document.querySelector(
+      'input[name="selectedTestCase"]:checked'
+    );
+
+    if (!selected || !uploadedCases[Number(selected.value)]) {
+      error.textContent =
+        "Upload and select a valid test case first.";
+      return;
+    }
+
+    document.getElementById("prompt").value =
+      uploadedCases[Number(selected.value)].prompt;
+  }
 
   const countries = [
     ...document.querySelectorAll("#countries input:checked")
@@ -2121,7 +2404,10 @@ function downloadText(name, text, type) {
 }
 
 function exportJSON() {
-  if (!currentRun) return;
+  if (!currentRun) {
+    alert("Please run or open an investigation before downloading evidence.");
+    return;
+  }
 
   const evidence = {
     ...currentRun,
@@ -2141,7 +2427,10 @@ function exportJSON() {
 }
 
 function exportReport() {
-  if (!currentRun) return;
+  if (!currentRun) {
+    alert("Please run or open an investigation before downloading a report.");
+    return;
+  }
 
   const comparisons =
     currentRun.languageComparisons || [];
